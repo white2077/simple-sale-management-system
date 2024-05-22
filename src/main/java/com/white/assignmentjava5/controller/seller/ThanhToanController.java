@@ -4,6 +4,7 @@ import com.white.assignmentjava5.dto.CartDto;
 import com.white.assignmentjava5.entity.NhanVien;
 import com.white.assignmentjava5.enums.PhuongThucThanhToan;
 import com.white.assignmentjava5.service.IHoaDonService;
+import com.white.assignmentjava5.service.IKhachHangService;
 import com.white.assignmentjava5.service.INhanVienService;
 import com.white.assignmentjava5.service.VNPayService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -27,60 +28,51 @@ import java.util.List;
 @FieldDefaults(makeFinal = true, level = lombok.AccessLevel.PRIVATE)
 public class ThanhToanController {
 
-    IHoaDonService HoaDonService;
+    IHoaDonService hoaDonService;
     VNPayService vnPayService;
+    IKhachHangService khachHangService;
+
 
     @PostMapping("/checkout")
-    public String checkout(Model model, HttpSession httpSession,
-                           @RequestParam("khachHang") String maKhachHang,
+    public String checkout(HttpSession session, @RequestParam("khachHang") String maKhachHang,
                            @RequestParam("phuongThucThanhToan") boolean phuongThucThanhToan,
-                           HttpServletRequest httpServletRequest) {
+                           HttpServletRequest request,Model model) {
         try {
-            Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-            String username = ((NhanVien) principal).getUsername();
-            List<CartDto.CartDtoRequest> cartDtoRequests =
-                    (List<CartDto.CartDtoRequest>) httpSession.getAttribute("cart");
-            if (phuongThucThanhToan){
-                HoaDonService.thanhToanHoaDon(
-                        cartDtoRequests,
-                        username,
-                        true,
-                        maKhachHang, PhuongThucThanhToan.TIEN_MAT
-                );
+            String username = ((NhanVien) SecurityContextHolder.getContext().getAuthentication().getPrincipal()).getUsername();
+            List<CartDto.CartDtoRequest> cart = (List<CartDto.CartDtoRequest>) session.getAttribute("cart");
 
+            if (phuongThucThanhToan) {
+                hoaDonService.thanhToanHoaDon(cart, username, true, maKhachHang, PhuongThucThanhToan.TIEN_MAT);
+            } else {
+                session.setAttribute("maKhachHang", maKhachHang);
+                long amount = cart.stream().mapToLong(CartDto.CartDtoRequest::getDonGia).sum();
+                String paymentUrl = vnPayService.createVnPayPayment(request, amount);
+                session.setAttribute("paymentUrl", paymentUrl);
+                return "redirect:" + paymentUrl;
             }
-            else {
-                httpSession.setAttribute("maKhachHang", maKhachHang);
-                long amount = cartDtoRequests.stream().mapToLong(CartDto.CartDtoRequest::getDonGia).sum();
-                return "redirect:" + vnPayService.createVnPayPayment(httpServletRequest, amount);
-            }
-            httpSession.removeAttribute("cart");
+
+            session.removeAttribute("cart");
             return "redirect:/seller/ban-hang/trang-ban-hang";
-        } catch (Exception e) {
+        }catch (Exception e){
             model.addAttribute("error", "Thanh toán thất bại");
+            model.addAttribute("khachHangs", khachHangService.getAll());
             return "page/web/ban-hang.jsp";
         }
     }
 
     @GetMapping("/return")
-    public String returnVnPay(@RequestParam ("vnp_ResponseCode") String responseCode,
-                              HttpSession httpSession,
-                              Model model) {
-        List<CartDto.CartDtoRequest> cartDtoRequests =
-                (List<CartDto.CartDtoRequest>) httpSession.getAttribute("cart");
-        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        String username = ((NhanVien) principal).getUsername();
+    public String returnVnPay(@RequestParam ("vnp_ResponseCode") String responseCode, HttpSession session, Model model) {
         if (responseCode.equals("00")) {
-            String maKhachHang = (String) httpSession.getAttribute("maKhachHang");
-            HoaDonService.thanhToanHoaDon(
-                    cartDtoRequests,
-                    username,
-                    true,
-                    maKhachHang, PhuongThucThanhToan.CHUYEN_KHOAN_VNPAY);
-            httpSession.removeAttribute("cart");
-            httpSession.removeAttribute("maKhachHang");
+            String username = ((NhanVien) SecurityContextHolder.getContext().getAuthentication().getPrincipal()).getUsername();
+            List<CartDto.CartDtoRequest> cart = (List<CartDto.CartDtoRequest>) session.getAttribute("cart");
+            String maKhachHang = (String) session.getAttribute("maKhachHang");
+            hoaDonService.thanhToanHoaDon(cart, username, true, maKhachHang, PhuongThucThanhToan.CHUYEN_KHOAN_VNPAY);
+            session.removeAttribute("cart");
+            session.removeAttribute("maKhachHang");
+            session.removeAttribute("paymentUrl");
             return "redirect:/seller/ban-hang/trang-ban-hang";
-        }else {
+        } else {
+
             model.addAttribute("error", "Thanh toán thất bại");
             return "page/web/ban-hang.jsp";
         }
